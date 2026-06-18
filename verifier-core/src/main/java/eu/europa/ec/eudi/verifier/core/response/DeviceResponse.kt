@@ -95,10 +95,13 @@ interface Response
  *
  * @property deviceResponse The parsed device response object.
  * @property deviceResponseBytes The raw bytes of the device response.
+ * @property sessionTranscript The ISO 18013-5 SessionTranscript bytes for this exchange. Needed to
+ * verify Zero-Knowledge proofs (`deviceResponse.zkDocuments`), whose public statement binds to it.
  */
 class DeviceResponse(
     val deviceResponse: DeviceResponseParser.DeviceResponse,
-    val deviceResponseBytes: ByteArray
+    val deviceResponseBytes: ByteArray,
+    val sessionTranscript: ByteArray
 ) : Response {
 
     val documentsClaims: List<DocumentClaims> by lazy {

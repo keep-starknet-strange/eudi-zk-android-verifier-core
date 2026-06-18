@@ -103,7 +103,8 @@ class TransferManagerImpl(
                 try {
                     val deviceResponse = DeviceResponse(
                         parser.parse(),
-                        deviceResponseBytes
+                        deviceResponseBytes,
+                        verification.sessionTranscript
                     )
                     logger?.d(TAG, "ResponseReceived ${Cbor.toDiagnostics(deviceResponseBytes)}")
                     transferEventListener?.onEvent(
@@ -178,7 +179,8 @@ class TransferManagerImpl(
                         readerKeyCertificateChain = null,
                         requestInfo = null,
                         readerKey = null,
-                        signatureAlgorithm = Algorithm.UNSET
+                        signatureAlgorithm = Algorithm.UNSET,
+                        zkSystemSpecs = doc.zkSystemSpecs
                     )
                 }
             }
