@@ -26,12 +26,14 @@ import eu.europa.ec.eudi.verifier.core.logging.Logger
 import eu.europa.ec.eudi.verifier.core.logging.d
 import eu.europa.ec.eudi.verifier.core.logging.e
 import eu.europa.ec.eudi.verifier.core.request.DeviceRequest
-import eu.europa.ec.eudi.verifier.core.request.Request
 import eu.europa.ec.eudi.verifier.core.response.DeviceResponse
+import kotlinx.coroutines.runBlocking
 import org.multipaz.cbor.Cbor
 import org.multipaz.crypto.Algorithm
+import org.multipaz.crypto.AsymmetricKey
 import org.multipaz.mdoc.connectionmethod.MdocConnectionMethod
 import org.multipaz.mdoc.request.DeviceRequestGenerator
+import org.multipaz.mdoc.request.ZkRequest
 import org.multipaz.mdoc.response.DeviceResponseParser
 import org.multipaz.mdoc.role.MdocRole
 import java.util.concurrent.Executor
@@ -99,10 +101,13 @@ class TransferManagerImpl(
 
             verificationHelper?.let { verification ->
                 val parser = DeviceResponseParser(deviceResponseBytes, verification.sessionTranscript)
-                parser.setEphemeralReaderKey(verification.eReaderKey)
+                // 0.99.0: setEphemeralReaderKey takes the new AsymmetricKey; wrap the legacy
+                // EcPrivateKey from the VerificationHelper.
+                parser.setEphemeralReaderKey(AsymmetricKey.anonymous(verification.eReaderKey))
                 try {
                     val deviceResponse = DeviceResponse(
-                        parser.parse(),
+                        // 0.99.0: parse() is now suspend; this callback is synchronous so block on it.
+                        runBlocking { parser.parse() },
                         deviceResponseBytes,
                         verification.sessionTranscript
                     )
@@ -171,16 +176,28 @@ class TransferManagerImpl(
         // Use DeviceRequestGenerator to generate a DeviceRequest bytes
         // then send it using verificationHelper.sendRequest()
         verificationHelper?.let { verification ->
-            val requestGenerator = DeviceRequestGenerator(verification.sessionTranscript).apply {
+            val requestGenerator = DeviceRequestGenerator(verification.sessionTranscript)
+            // 0.99.0: addDocumentRequest is now suspend; this method is synchronous so block on it.
+            runBlocking {
                 request.docRequests.forEach { doc ->
-                    addDocumentRequest(
+                    val requestInfo = doc.zkSystemSpecs
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { specs ->
+                            mapOf(
+                                "zkRequest" to Cbor.encode(
+                                    ZkRequest(systemSpecs = specs, zkRequired = true).toDataItem()
+                                )
+                            )
+                        }
+
+                    requestGenerator.addDocumentRequest(
                         docType = doc.docType,
                         itemsToRequest = doc.itemsRequest,
-                        readerKeyCertificateChain = null,
-                        requestInfo = null,
+                        requestInfo = requestInfo,
                         readerKey = null,
                         signatureAlgorithm = Algorithm.UNSET,
-                        zkSystemSpecs = doc.zkSystemSpecs
+                        readerKeyCertificateChain = null,
+                        zkSystemSpecs = emptyList()
                     )
                 }
             }
