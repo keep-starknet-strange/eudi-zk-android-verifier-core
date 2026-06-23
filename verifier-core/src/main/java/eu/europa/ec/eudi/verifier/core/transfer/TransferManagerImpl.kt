@@ -18,8 +18,6 @@ package eu.europa.ec.eudi.verifier.core.transfer
 import android.app.Activity
 import android.content.Context
 import android.nfc.NfcAdapter
-import android.os.Build
-import androidx.core.content.ContextCompat
 import com.android.identity.android.mdoc.deviceretrieval.VerificationHelper
 import com.android.identity.android.mdoc.transport.DataTransportOptions
 import eu.europa.ec.eudi.verifier.core.logging.Logger
@@ -37,6 +35,8 @@ import org.multipaz.mdoc.request.ZkRequest
 import org.multipaz.mdoc.response.DeviceResponseParser
 import org.multipaz.mdoc.role.MdocRole
 import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class TransferManagerImpl(
     private val context: Context,
@@ -52,6 +52,8 @@ class TransferManagerImpl(
     private var transferEventListener : TransferEvent.Listener? = null
 
     private var verificationHelper: VerificationHelper? = null
+
+    private var responseExecutor: ExecutorService? = null
 
     private val responseListener = object : VerificationHelper.Listener {
 
@@ -153,10 +155,12 @@ class TransferManagerImpl(
             .setBleClearCache(config.bleClearCache)
             .build()
 
+        val executor = Executors.newSingleThreadExecutor()
+        responseExecutor = executor
         verificationHelper = verificationHelperFactory(
             context,
             responseListener,
-            context.mainExecutor(),
+            executor,
             options
         )
 
@@ -213,15 +217,10 @@ class TransferManagerImpl(
         verificationHelper?.disconnect()
         verificationHelper = null
         transferEventListener = null
+        responseExecutor?.shutdown()
+        responseExecutor = null
     }
 
-    private fun Context.mainExecutor(): Executor {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            mainExecutor
-        } else {
-            ContextCompat.getMainExecutor(context)
-        }
-    }
     companion object {
         private const val TAG = "TransferManager"
         private const val RESPONSE = "response"
