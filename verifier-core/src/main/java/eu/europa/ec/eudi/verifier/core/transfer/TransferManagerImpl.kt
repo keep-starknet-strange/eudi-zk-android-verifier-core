@@ -30,6 +30,7 @@ import org.multipaz.cbor.Cbor
 import org.multipaz.crypto.Algorithm
 import org.multipaz.crypto.AsymmetricKey
 import org.multipaz.mdoc.connectionmethod.MdocConnectionMethod
+import org.multipaz.mdoc.connectionmethod.MdocConnectionMethodWifiAware
 import org.multipaz.mdoc.request.DeviceRequestGenerator
 import org.multipaz.mdoc.request.ZkRequest
 import org.multipaz.mdoc.response.DeviceResponseParser
@@ -78,7 +79,13 @@ class TransferManagerImpl(
             )
 
             if (availableMdocConnectionMethods.isNotEmpty()) {
-                verificationHelper?.connect(availableMdocConnectionMethods.first())
+                // Prefer Wi-Fi Aware when the holder advertises it (higher throughput for large
+                // responses), otherwise use the first advertised method (typically BLE).
+                val selected = availableMdocConnectionMethods
+                    .firstOrNull { it is MdocConnectionMethodWifiAware }
+                    ?: availableMdocConnectionMethods.first()
+                logger?.d(TAG, "Selected connection method: $selected")
+                verificationHelper?.connect(selected)
             } else {
                 onError(IllegalStateException("No mdoc connection method selected"))
                 logger?.e(TAG, "No mdoc connection method selected")
