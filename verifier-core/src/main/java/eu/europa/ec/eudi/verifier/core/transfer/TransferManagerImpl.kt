@@ -17,6 +17,7 @@ package eu.europa.ec.eudi.verifier.core.transfer
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import com.android.identity.android.mdoc.deviceretrieval.VerificationHelper
 import com.android.identity.android.mdoc.transport.DataTransportOptions
@@ -80,11 +81,15 @@ class TransferManagerImpl(
 
             if (availableMdocConnectionMethods.isNotEmpty()) {
                 // Prefer Wi-Fi Aware when the holder advertises it (higher throughput for large
-                // responses), otherwise use the first advertised method (typically BLE).
+                // responses), but only if this device actually supports Wi-Fi Aware. Fall back to
+                // the first advertised method (typically BLE).
+                val deviceSupportsWifiAware = context.packageManager
+                    .hasSystemFeature(PackageManager.FEATURE_WIFI_AWARE)
                 val selected = availableMdocConnectionMethods
-                    .firstOrNull { it is MdocConnectionMethodWifiAware }
+                    .firstOrNull { it is MdocConnectionMethodWifiAware && deviceSupportsWifiAware }
+                    ?: availableMdocConnectionMethods.firstOrNull { it !is MdocConnectionMethodWifiAware }
                     ?: availableMdocConnectionMethods.first()
-                logger?.d(TAG, "Selected connection method: $selected")
+                logger?.d(TAG, "Selected connection method: $selected (wifiAwareSupported=$deviceSupportsWifiAware)")
                 verificationHelper?.connect(selected)
             } else {
                 onError(IllegalStateException("No mdoc connection method selected"))
