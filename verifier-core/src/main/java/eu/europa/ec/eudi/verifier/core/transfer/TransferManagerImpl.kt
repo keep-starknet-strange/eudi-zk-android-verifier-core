@@ -17,24 +17,28 @@ package eu.europa.ec.eudi.verifier.core.transfer
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
-import android.os.Build
-import androidx.core.content.ContextCompat
 import com.android.identity.android.mdoc.deviceretrieval.VerificationHelper
 import com.android.identity.android.mdoc.transport.DataTransportOptions
 import eu.europa.ec.eudi.verifier.core.logging.Logger
 import eu.europa.ec.eudi.verifier.core.logging.d
 import eu.europa.ec.eudi.verifier.core.logging.e
 import eu.europa.ec.eudi.verifier.core.request.DeviceRequest
-import eu.europa.ec.eudi.verifier.core.request.Request
 import eu.europa.ec.eudi.verifier.core.response.DeviceResponse
+import kotlinx.coroutines.runBlocking
 import org.multipaz.cbor.Cbor
 import org.multipaz.crypto.Algorithm
+import org.multipaz.crypto.AsymmetricKey
 import org.multipaz.mdoc.connectionmethod.MdocConnectionMethod
+import org.multipaz.mdoc.connectionmethod.MdocConnectionMethodWifiAware
 import org.multipaz.mdoc.request.DeviceRequestGenerator
+import org.multipaz.mdoc.request.ZkRequest
 import org.multipaz.mdoc.response.DeviceResponseParser
 import org.multipaz.mdoc.role.MdocRole
 import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class TransferManagerImpl(
     private val context: Context,
@@ -50,6 +54,8 @@ class TransferManagerImpl(
     private var transferEventListener : TransferEvent.Listener? = null
 
     private var verificationHelper: VerificationHelper? = null
+
+    private var responseExecutor: ExecutorService? = null
 
     private val responseListener = object : VerificationHelper.Listener {
 
@@ -74,7 +80,17 @@ class TransferManagerImpl(
             )
 
             if (availableMdocConnectionMethods.isNotEmpty()) {
-                verificationHelper?.connect(availableMdocConnectionMethods.first())
+                // Prefer Wi-Fi Aware when the holder advertises it (higher throughput for large
+                // responses), but only if this device actually supports Wi-Fi Aware. Fall back to
+                // the first advertised method (typically BLE).
+                val deviceSupportsWifiAware = context.packageManager
+                    .hasSystemFeature(PackageManager.FEATURE_WIFI_AWARE)
+                val selected = availableMdocConnectionMethods
+                    .firstOrNull { it is MdocConnectionMethodWifiAware && deviceSupportsWifiAware }
+                    ?: availableMdocConnectionMethods.firstOrNull { it !is MdocConnectionMethodWifiAware }
+                    ?: availableMdocConnectionMethods.first()
+                logger?.d(TAG, "Selected connection method: $selected (wifiAwareSupported=$deviceSupportsWifiAware)")
+                verificationHelper?.connect(selected)
             } else {
                 onError(IllegalStateException("No mdoc connection method selected"))
                 logger?.e(TAG, "No mdoc connection method selected")
@@ -99,11 +115,15 @@ class TransferManagerImpl(
 
             verificationHelper?.let { verification ->
                 val parser = DeviceResponseParser(deviceResponseBytes, verification.sessionTranscript)
-                parser.setEphemeralReaderKey(verification.eReaderKey)
+                // 0.99.0: setEphemeralReaderKey takes the new AsymmetricKey; wrap the legacy
+                // EcPrivateKey from the VerificationHelper.
+                parser.setEphemeralReaderKey(AsymmetricKey.anonymous(verification.eReaderKey))
                 try {
                     val deviceResponse = DeviceResponse(
-                        parser.parse(),
-                        deviceResponseBytes
+                        // 0.99.0: parse() is now suspend; this callback is synchronous so block on it.
+                        runBlocking { parser.parse() },
+                        deviceResponseBytes,
+                        verification.sessionTranscript
                     )
                     logger?.d(TAG, "ResponseReceived ${Cbor.toDiagnostics(deviceResponseBytes)}")
                     transferEventListener?.onEvent(
@@ -147,10 +167,12 @@ class TransferManagerImpl(
             .setBleClearCache(config.bleClearCache)
             .build()
 
+        val executor = Executors.newSingleThreadExecutor()
+        responseExecutor = executor
         verificationHelper = verificationHelperFactory(
             context,
             responseListener,
-            context.mainExecutor(),
+            executor,
             options
         )
 
@@ -170,15 +192,28 @@ class TransferManagerImpl(
         // Use DeviceRequestGenerator to generate a DeviceRequest bytes
         // then send it using verificationHelper.sendRequest()
         verificationHelper?.let { verification ->
-            val requestGenerator = DeviceRequestGenerator(verification.sessionTranscript).apply {
+            val requestGenerator = DeviceRequestGenerator(verification.sessionTranscript)
+            // 0.99.0: addDocumentRequest is now suspend; this method is synchronous so block on it.
+            runBlocking {
                 request.docRequests.forEach { doc ->
-                    addDocumentRequest(
+                    val requestInfo = doc.zkSystemSpecs
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { specs ->
+                            mapOf(
+                                "zkRequest" to Cbor.encode(
+                                    ZkRequest(systemSpecs = specs, zkRequired = true).toDataItem()
+                                )
+                            )
+                        }
+
+                    requestGenerator.addDocumentRequest(
                         docType = doc.docType,
                         itemsToRequest = doc.itemsRequest,
-                        readerKeyCertificateChain = null,
-                        requestInfo = null,
+                        requestInfo = requestInfo,
                         readerKey = null,
-                        signatureAlgorithm = Algorithm.UNSET
+                        signatureAlgorithm = Algorithm.UNSET,
+                        readerKeyCertificateChain = null,
+                        zkSystemSpecs = emptyList()
                     )
                 }
             }
@@ -194,15 +229,10 @@ class TransferManagerImpl(
         verificationHelper?.disconnect()
         verificationHelper = null
         transferEventListener = null
+        responseExecutor?.shutdown()
+        responseExecutor = null
     }
 
-    private fun Context.mainExecutor(): Executor {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            mainExecutor
-        } else {
-            ContextCompat.getMainExecutor(context)
-        }
-    }
     companion object {
         private const val TAG = "TransferManager"
         private const val RESPONSE = "response"

@@ -24,11 +24,11 @@ import eu.europa.ec.eudi.verifier.core.transfer.TransferManagerFactory
 import eu.europa.ec.eudi.verifier.core.trust.DocumentTrust
 import eu.europa.ec.eudi.verifier.core.trust.isDocumentTrusted
 import kotlinx.coroutines.runBlocking
+import kotlinx.io.bytestring.ByteString
 import org.multipaz.crypto.X509Cert
 import org.multipaz.mdoc.response.DeviceResponseParser
 import org.multipaz.storage.ephemeral.EphemeralStorage
 import org.multipaz.trustmanagement.TrustManager
-import org.multipaz.trustmanagement.TrustManagerLocal
 import org.multipaz.trustmanagement.TrustMetadata
 import org.multipaz.trustmanagement.TrustResult
 import java.security.cert.X509Certificate
@@ -156,12 +156,12 @@ interface EudiVerifier : TransferManagerFactory, DocumentStatusResolver, Documen
                 certificatesProvider?.getCertificates()
             } ?: emptyList()
 
-            val trustManager = TrustManagerLocal(
+            val trustManager = TrustManager(
                 storage = EphemeralStorage(),
                 identifier = "EudiVerifier",
             ).apply {
                 certificatesToUse.forEach { cert ->
-                    val customCert = X509Cert(cert.encoded)
+                    val customCert = X509Cert(ByteString(cert.encoded))
                     runBlocking {
                         addX509Cert(
                             certificate = customCert,

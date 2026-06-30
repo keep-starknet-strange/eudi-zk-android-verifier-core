@@ -18,6 +18,7 @@ package eu.europa.ec.eudi.verifier.core.request
 import eu.europa.ec.eudi.verifier.core.DataElementIdentifier
 import eu.europa.ec.eudi.verifier.core.DocType
 import eu.europa.ec.eudi.verifier.core.Namespace
+import org.multipaz.mdoc.zkp.ZkSystemSpec
 import java.security.cert.X509Certificate
 
 /**
@@ -41,11 +42,15 @@ class DeviceRequest(
  * @property docType The type of document being requested.
  * @property itemsRequest The map of namespaces to data element identifiers and their intent to retain.
  * @property readerAuthCertificate The certificate used for reader authentication, if available.
+ * @property zkSystemSpecs The Zero-Knowledge system specs the verifier accepts for this document. When
+ * non-empty, a `ZkRequest` is attached to the document request and a ZK-capable wallet may respond with
+ * a zero-knowledge proof instead of the plaintext document. Empty (default) means no ZK is requested.
  */
 data class DocRequest(
     val docType: DocType,
     var itemsRequest: ItemsRequest,
-    var readerAuthCertificate: X509Certificate?
+    var readerAuthCertificate: X509Certificate?,
+    var zkSystemSpecs: List<ZkSystemSpec> = emptyList()
 )
 
 /**
